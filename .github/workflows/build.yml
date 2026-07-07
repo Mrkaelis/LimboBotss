@@ -1,0 +1,103 @@
+name: Build LimboBots
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify project structure
+        run: |
+          test -f pom.xml && echo "pom.xml на месте" || (echo "::error::pom.xml не найден в корне репозитория" && exit 1)
+
+          echo "--- Проверка исходных ресурсов плагина ---"
+          if [ ! -f "src/main/resources/plugin.yml" ]; then
+            echo "::error::src/main/resources/plugin.yml отсутствует в репозитории! Проверьте .gitignore (частая причина - правило вида '*.yml' или 'resources/') и что файл действительно закоммичен: git ls-files | grep plugin.yml"
+            exit 1
+          fi
+          echo "plugin.yml найден в исходниках."
+
+          if [ ! -f "src/main/resources/config.yml" ]; then
+            echo "::warning::src/main/resources/config.yml отсутствует в репозитории (плагин всё равно запустится и создаст конфиг по умолчанию, но лучше проверить)."
+          fi
+
+          echo "--- Содержимое src/main/resources ---"
+          ls -la src/main/resources/
+
+      # Ставим сразу две JDK:
+      # - 8, потому что BuildTools для старого ядра 1.16.5 надёжно работает
+      #   именно на Java 8 (на новых JDK может отказаться собираться);
+      # - 17, чтобы собирать сам плагин современным тулчейном.
+      - name: Set up JDK 8 and JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            8
+            17
+          cache: maven
+
+      - name: Cache Spigot BuildTools output
+        id: spigot-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/spigotmc
+          key: spigot-1.16.5-r0.1-snapshot-${{ runner.os }}
+
+      - name: Build Spigot 1.16.5 via BuildTools (if not cached)
+        if: steps.spigot-cache.outputs.cache-hit != 'true'
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME_8_X64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/buildtools
+          cd /tmp/buildtools
+
+          BUILDTOOLS_URL="https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar"
+          echo "Скачиваю BuildTools.jar с: ${BUILDTOOLS_URL}"
+
+          if ! curl -fSL --retry 3 --retry-delay 5 -o BuildTools.jar "${BUILDTOOLS_URL}"; then
+            echo "curl не смог скачать файл, пробую wget..."
+            wget -O BuildTools.jar "${BUILDTOOLS_URL}"
+          fi
+
+          ls -la BuildTools.jar
+          file BuildTools.jar || true
+
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+          "$JAVA_HOME/bin/java" -jar BuildTools.jar --rev 1.16.5
+
+      - name: Build plugin with Maven (JDK 17)
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME_17_X64 }}
+        run: mvn -B clean package
+
+      - name: Verify plugin.yml is inside the built jar
+        run: |
+          echo "--- Содержимое target/LimboBots.jar ---"
+          unzip -l target/LimboBots.jar
+
+          if ! unzip -p target/LimboBots.jar plugin.yml > /dev/null 2>&1; then
+            echo "::error::plugin.yml отсутствует внутри собранного LimboBots.jar! Смотри список файлов выше - если папки src/main/resources не видно в target/classes, проблема в конфигурации Maven-ресурсов или в том, что файл не попал в git (см. предыдущий шаг)."
+            exit 1
+          fi
+
+          echo "--- Содержимое plugin.yml внутри jar ---"
+          unzip -p target/LimboBots.jar plugin.yml
+          echo "plugin.yml успешно найден внутри jar."
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LimboBots
+          path: target/LimboBots.jar
