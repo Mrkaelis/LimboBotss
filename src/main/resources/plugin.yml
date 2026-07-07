@@ -1,0 +1,22 @@
+name: LimboBots
+version: 2.0.0
+main: ru.mrsteve.limbobots.LimboBots
+api-version: 1.16
+author: MrSteve
+description: Плагин для добавления ботов (NPC-игроков) и накрутки онлайна на сервере
+softdepend: [LuckPerms, PlaceholderAPI]
+
+commands:
+  limbobots:
+    description: Управление ботами LimboBots
+    usage: /<command> <add|remove|clear|list|tp|equip|rank|ranks|mute|unmute>
+    permission: limbobots.admin
+    aliases: [lb, bots]
+
+permissions:
+  limbobots.admin:
+    description: Доступ к командам управления ботами LimboBots
+    default: op
+  limbobots.tp:
+    description: Разрешение использовать /tp с поддержкой телепортации к ботам
+    default: op
